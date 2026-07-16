@@ -19,7 +19,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const protocol = requestHeaders.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
   const origin = `${protocol}://${host}`;
   const title = "AI-Comp Decoded — Inside an Optimizing VLIW SIMD Compiler";
-  const description = "A visual guide to the techniques AI-Comp uses to turn high-level tree-hash code into efficient VLIW SIMD bundles.";
+  const description = "A source-reviewed visual guide to how AI-Comp turns high-level tree-hash code into efficient VLIW SIMD bundles, with diagrams, terminology, and performance context.";
 
   return {
     metadataBase: new URL(origin),

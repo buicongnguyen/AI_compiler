@@ -24,6 +24,13 @@ test("server-renders the AI-Comp explainer and social metadata", async () => {
   assert.match(html, /How a compiler/);
   assert.match(html, /Intent in\./);
   assert.match(html, /Eight moves\./);
+  assert.match(html, /See the compiler/);
+  assert.match(html, /Data movement/);
+  assert.match(html, /Dependency → schedule/);
+  assert.match(html, /PERFORMANCE CONTEXT/);
+  assert.match(html, /REVIEWED SOURCES/);
+  assert.match(html, /Anthropic original performance take-home/);
+  assert.match(html, /LLVM auto-vectorization documentation/);
   assert.match(html, /WHY VLIW IS THE ENDGAME/);
   assert.match(html, /https:\/\/github\.com\/fiigii\/ai-comp/);
   assert.match(html, /property="og:image" content="https?:\/\/[^\"]+\/og\.png"/);

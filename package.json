@@ -11,7 +11,7 @@
     "build:pages": "npm run build && node scripts/build-github-pages.mjs",
     "start": "vinext start",
     "test": "npm run build && node --test tests/rendered-html.test.mjs",
-    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
+    "lint": "eslint . --ignore-pattern dist --ignore-pattern docs --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {

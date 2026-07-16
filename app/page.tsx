@@ -42,9 +42,9 @@ const techniques = [
   { n: "02", name: "Delete the noise", optimizes: "Instruction count", detail: "DCE removes unused results. CSE reuses repeated expressions. Copy propagation, folding, and CFG cleanup repeatedly shrink the program as new opportunities appear.", change: "less work · shorter dependency chains" },
   { n: "03", name: "Promote memory", optimizes: "Memory traffic", detail: "SROA turns small aggregate and table accesses into SSA values; load elimination and DSE remove redundant traffic when alias analysis proves it safe.", change: "loads become value reuse · dead stores vanish" },
   { n: "04", name: "Make arithmetic cheaper", optimizes: "ALU operations", detail: "Strength reduction replaces repeated induction arithmetic, while MAD synthesis recognizes multiply-plus-add shapes supported directly by the vector engine.", change: "multiple ops collapse into one machine op" },
-  { n: "05", name: "Pack eight lanes", optimizes: "Data parallelism", detail: "Superword-level parallelism groups isomorphic scalar operations into the VM’s 8-lane vectors, including contiguous memory and gather-like patterns.", change: "up to 8 scalar values per vector instruction" },
+  { n: "05", name: "Pack eight lanes", optimizes: "Data parallelism", detail: "Superword-level parallelism groups independent, isomorphic scalar operations into the VM’s 8-lane vectors. Contiguous accesses become vload/vstore; gather-like access is built from lane-wise loads.", change: "up to 8 scalar values per vector ALU instruction" },
   { n: "06", name: "Schedule the graph", optimizes: "Bundle occupancy", detail: "A dependency graph decides what is ready. Delay-aware list scheduling prioritizes work that unblocks loads, fills engine slots, and can stagger independent streams.", change: "fewer empty slots · fewer dependency stalls" },
-  { n: "07", name: "Spend registers wisely", optimizes: "Scratch pressure", detail: "Live ranges are mapped into 1,536 scratch words. The default pipeline disables spilling, so allocation must fit scalars and aligned 8-word vectors.", change: "reuse scratch safely · avoid allocation failure" },
+  { n: "07", name: "Spend registers wisely", optimizes: "Scratch pressure", detail: "Linear-scan allocation maps live ranges into 1,536 scratch words. Spill machinery exists, but the default pass configuration disables it, so scalars and contiguous 8-word vectors must fit.", change: "reuse scratch safely · avoid allocation failure" },
   { n: "08", name: "Bundle for width", optimizes: "Cycle count", detail: "Independent operations share a cycle: up to 12 scalar ALU, 6 vector ALU, 2 loads, 2 stores, and 1 flow slot.", change: "more useful operations retired each cycle" },
 ];
 
@@ -54,7 +54,7 @@ const optimizationTargets = [
   { key: "MEM", title: "Memory traffic", body: "The machine has only two load and two store slots per bundle. Keeping values in scratch and reusing proven loads reduces a frequent bottleneck.", signal: "Load/store slots", tone: "blue" },
   { key: "SIMD", title: "Lane utilization", body: "VALU instructions operate on eight contiguous scratch words. Vectorization pays when eight independent scalar operations can share one vector opcode.", signal: "8 lanes per vector", tone: "acid" },
   { key: "ILP", title: "Engine utilization", body: "VLIW is only fast when independent ALU, VALU, load, store, and flow operations can occupy the same bundle without hazards.", signal: "Fill parallel slots", tone: "orange" },
-  { key: "REG", title: "Register pressure", body: "Unrolling and vectorization create more live values. Those values must still fit in the 1,536-word per-core scratch file, including alignment holes.", signal: "Hard capacity", tone: "blue" },
+  { key: "REG", title: "Register pressure", body: "Unrolling and vectorization create more live values. They must fit in the 1,536-word per-core scratch file; each vector needs one contiguous range of eight words.", signal: "Hard capacity", tone: "blue" },
 ];
 
 const terms = [
@@ -74,11 +74,38 @@ const terms = [
   { category: "Pass", term: "SLSR", expansion: "Straight-Line Strength Reduction", definition: "Recognize related repeated arithmetic and derive later values from earlier ones with cheaper incremental operations." },
   { category: "Pass", term: "SLP", expansion: "Superword-Level Parallelism", definition: "Find similar independent scalar statements and pack them into fixed-width vector operations without changing the source algorithm." },
   { category: "Pass", term: "MAD", expansion: "Multiply-Add", definition: "Fuse a multiply followed by an add into the target’s multiply_add operation when use counts and dependencies make it legal and profitable." },
-  { category: "Machine", term: "Register pressure", expansion: "Live storage demand", definition: "How many scratch words must hold simultaneously live values. Vectors count as eight words and may require aligned contiguous space." },
+  { category: "Machine", term: "Register pressure", expansion: "Live storage demand", definition: "How many scratch words must hold simultaneously live values. Vectors count as eight words and need a contiguous range, which can make fragmentation matter." },
   { category: "Machine", term: "RAW hazard", expansion: "Read After Write", definition: "A consumer cannot read a producer’s new value in the same bundle because all slots read the pre-bundle state. It must wait at least one bundle." },
+  { category: "Machine", term: "Gather", expansion: "Load from unrelated addresses", definition: "Each vector lane reads a different address. This VM has no native gather opcode, so AI-Comp forms gather-like work from lane-wise load_offset operations." },
+  { category: "Analysis", term: "Critical path", expansion: "Longest dependency chain", definition: "The chain of dependent operations that sets a lower bound on schedule length. Work outside that chain may fill otherwise idle engine slots." },
+  { category: "Pass", term: "List scheduling", expansion: "Choose among ready operations", definition: "Repeatedly select dependency-ready instructions by priority and pack those that fit the current bundle’s remaining engine slots." },
+  { category: "Machine", term: "Spilling", expansion: "Move live values to memory", definition: "When scratch is exhausted, save selected live values to memory and reload them later. AI-Comp implements this, but its default configuration disables it." },
 ];
 
 const passes = ["DCE", "UNROLL", "SIMPLIFY", "CSE", "SROA", "LOAD ELIM", "DSE", "SLSR", "SLP ×8", "MAD", "LOWER", "COPY PROP", "CFG", "PHI ELIM", "SCHEDULE", "REGALLOC", "VLIW"];
+
+const benchmarkLadder = [
+  { label: "2-hour starter", cycles: 18532, speedup: 1.0, kind: "baseline" },
+  { label: "Opus 4 · extended harness", cycles: 2164, speedup: 8.56 },
+  { label: "Opus 4.5 · casual session", cycles: 1790, speedup: 10.35 },
+  { label: "Opus 4.5 · 2-hour harness", cycles: 1579, speedup: 11.74 },
+  { label: "Sonnet 4.5 · extended harness", cycles: 1548, speedup: 11.97 },
+  { label: "Opus 4.5 · 11.5-hour harness", cycles: 1487, speedup: 12.46 },
+  { label: "Opus 4.5 · improved harness", cycles: 1363, speedup: 13.6, kind: "best" },
+];
+
+const sources = [
+  { group: "Challenge", title: "Anthropic original performance take-home", url: "https://github.com/anthropics/original_performance_takehome", note: "Authoritative challenge description, validation rules, and published cycle reference points." },
+  { group: "Project", title: "AI-Comp source and README", url: "https://github.com/fiigii/ai-comp", note: "The compiler pipeline, diagnostics, pass configuration, tests, and kernel entry point explained by this site." },
+  { group: "Project", title: "AI-Comp VLIW ISA specification", url: "https://github.com/fiigii/ai-comp/blob/main/docs/VLIW_ISA.md", note: "Word size, scratch layout, vector length, bundle semantics, engines, and slot limits." },
+  { group: "Project", title: "Instruction scheduling design", url: "https://github.com/fiigii/ai-comp/blob/main/docs/instruction_scheduling_design.md", note: "Dependency delays, RAW hazards, conservative memory ordering, priorities, list scheduling, and stream staggering." },
+  { group: "Project", title: "SLP vectorization design", url: "https://github.com/fiigii/ai-comp/blob/main/docs/slp_vectorization_design.md", note: "Pack discovery, isomorphic operations, legality checks, cost modeling, and vector code generation." },
+  { group: "Project", title: "HIR load elimination design", url: "https://github.com/fiigii/ai-comp/blob/main/docs/hir_load_elimination_design.md", note: "MustAlias / NoAlias / MayAlias reasoning and safe store-to-load forwarding." },
+  { group: "LLVM", title: "LLVM auto-vectorization documentation", url: "https://llvm.org/docs/Vectorizers.html", note: "Independent confirmation of SLP’s purpose and the tradeoff between unrolling, parallelism, register pressure, and code size." },
+  { group: "LLVM", title: "LLVM alias-analysis infrastructure", url: "https://llvm.org/docs/AliasAnalysis.html", note: "Reference terminology for MustAlias, MayAlias, NoAlias, and memory modification/reference queries." },
+  { group: "LLVM", title: "LLVM IR language reference", url: "https://llvm.org/docs/LangRef.html#phi-instruction", note: "Primary reference for SSA-oriented IR and phi nodes at control-flow merges." },
+  { group: "Tool", title: "Perfetto UI documentation", url: "https://perfetto.dev/docs/visualization/perfetto-ui", note: "How the trace viewer used by the project presents execution events on a navigable timeline." },
+];
 
 export default function Home() {
   const [active, setActive] = useState(0);
@@ -92,9 +119,9 @@ export default function Home() {
         <a className="brand" href="#top" aria-label="AI-Comp decoded home"><span className="brand-mark">A/C</span><span>AI-COMP<br />DECODED</span></a>
         <div className="nav-links">
           <a href="#pipeline">Pipeline</a>
+          <a href="#diagrams">Diagrams</a>
           <a href="#targets">Targets</a>
-          <a href="#techniques">Techniques</a>
-          <a href="#glossary">Glossary</a>
+          <a href="#sources">Sources</a>
           <a className="source-link" href="https://github.com/fiigii/ai-comp" target="_blank" rel="noreferrer">Source ↗</a>
         </div>
       </nav>
@@ -146,9 +173,69 @@ export default function Home() {
         </div>
       </section>
 
+      <section className="diagram-section" id="diagrams">
+        <div className="shell">
+          <div className="section-heading inverse">
+            <div><span className="section-number">02</span><p className="label">SYSTEM MAPS</p></div>
+            <h2>See the compiler<br /><i>as a system.</i></h2>
+            <p>Three diagrams connect the optimization passes to the program, the memory system, and the machine scheduler.</p>
+          </div>
+
+          <article className="flow-diagram" aria-label="Compiler pipeline and optimization groups">
+            <div className="diagram-title"><span>A</span><div><b>Compilation flow</b><p>Every stage makes target constraints more explicit.</p></div></div>
+            <div className="flow-track">
+              <div className="flow-node input"><small>INPUT</small><b>Tree-hash kernel</b><span>loops · pointers · values</span></div>
+              <i>→</i>
+              <div className="flow-node hir"><small>HIR</small><b>Expose + simplify</b><span>unroll · CSE · SROA · SLP</span></div>
+              <i>→</i>
+              <div className="flow-node lir"><small>LIR</small><b>Lower structure</b><span>CFG · copies · phi removal</span></div>
+              <i>→</i>
+              <div className="flow-node mir"><small>MIR</small><b>Plan resources</b><span>DDG · schedule · regalloc</span></div>
+              <i>→</i>
+              <div className="flow-node output"><small>OUTPUT</small><b>VLIW bundles</b><span>legal parallel work / cycle</span></div>
+            </div>
+            <div className="invariant-line"><span>Invariant carried through every rewrite</span><b>same final indices + values + observable memory</b></div>
+          </article>
+
+          <div className="diagram-pair">
+            <article className="memory-diagram" aria-label="Data movement from memory through scratch vectors">
+              <div className="diagram-title"><span>B</span><div><b>Data movement</b><p>Why memory slots and scratch capacity matter.</p></div></div>
+              <div className="memory-path">
+                <div className="memory-box"><small>GLOBAL MEMORY</small><b>forest[]</b><b>indices[]</b><b>values[]</b></div>
+                <div className="path-arrow"><span>2 load slots</span>→</div>
+                <div className="scratch-box"><small>SCRATCH · 1,536 WORDS</small><div className="lane-row">{Array.from({length: 8}, (_, i) => <span key={i}>L{i}</span>)}</div><b>one vector = 8 contiguous words</b></div>
+                <div className="path-arrow"><span>VALU</span>→</div>
+                <div className="compute-box"><small>8-LANE COMPUTE</small><b>xor · add · MAD</b><span>same opcode, eight values</span></div>
+              </div>
+              <div className="memory-foot"><span><b>Reuse</b> keeps known values in scratch.</span><span><b>Pressure</b> rises when more values stay live.</span><span><b>Writeback</b> is limited to two store slots.</span></div>
+            </article>
+
+            <article className="dependency-diagram" aria-label="Dependency graph becoming scheduled VLIW bundles">
+              <div className="diagram-title"><span>C</span><div><b>Dependency → schedule</b><p>Ready work can co-issue; consumers must wait.</p></div></div>
+              <div className="dep-columns">
+                <div className="dep-graph">
+                  <div className="dep-row"><span className="dep-node load">load A</span><span className="dep-node load">load B</span></div>
+                  <div className="dep-down">↓ RAW &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ↓ RAW</div>
+                  <div className="dep-row"><span className="dep-node valu">xor₈</span><span className="dep-node alu">index + 1</span></div>
+                  <div className="dep-down">↓ RAW</div>
+                  <div className="dep-row"><span className="dep-node valu">MAD₈</span><span className="dep-node flow">loop test</span></div>
+                </div>
+                <div className="schedule-arrow">PACK<br />→</div>
+                <div className="mini-schedule">
+                  <div><b>C0</b><span className="load">load A · load B</span></div>
+                  <div><b>C1</b><span className="valu">xor₈</span><span className="alu">index + 1</span></div>
+                  <div><b>C2</b><span className="valu">MAD₈</span><span className="flow">loop test</span></div>
+                </div>
+              </div>
+              <p className="diagram-caption">Illustrative dependency graph: colors identify engines, while cycle rows show legal co-issue—not measured AI-Comp output.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
       <section className="targets-section shell" id="targets">
         <div className="section-heading">
-          <div><span className="section-number">02</span><p className="label">WHAT IS ACTUALLY OPTIMIZED?</p></div>
+          <div><span className="section-number">03</span><p className="label">WHAT IS ACTUALLY OPTIMIZED?</p></div>
           <h2>The answer is<br /><i>not just code size.</i></h2>
           <p>The output must produce exactly the same tree-hash result. Within that constraint, the compiler reshapes the program to execute fewer, fuller bundles.</p>
         </div>
@@ -160,13 +247,13 @@ export default function Home() {
         <div className="target-grid">
           {optimizationTargets.map(item => <article key={item.key} className={`target-card ${item.tone}`}><div><span>{item.key}</span><b>{item.signal}</b></div><h3>{item.title}</h3><p>{item.body}</p></article>)}
         </div>
-        <div className="tradeoff-note"><b>Why the targets conflict</b><p>Unrolling exposes more parallel work but increases code size and live values. Vectorization cuts instruction count but consumes aligned 8-word registers. Scheduling for maximum engine occupancy can lengthen live ranges. The compiler is balancing a system, not maximizing one number in isolation.</p></div>
+        <div className="tradeoff-note"><b>Why the targets conflict</b><p>Unrolling exposes more parallel work but increases code size and live values. Vectorization cuts instruction count but consumes contiguous 8-word scratch ranges. Scheduling for maximum engine occupancy can lengthen live ranges. The compiler is balancing a system, not maximizing one number in isolation.</p></div>
       </section>
 
       <section className="techniques-section" id="techniques">
         <div className="shell">
           <div className="section-heading inverse">
-            <div><span className="section-number">03</span><p className="label">THE OPTIMIZATION PLAYBOOK</p></div>
+            <div><span className="section-number">04</span><p className="label">THE OPTIMIZATION PLAYBOOK</p></div>
             <h2>Eight moves.<br /><i>One objective.</i></h2>
             <p>Minimize cycles without changing the tree traversal and hash result.</p>
           </div>
@@ -178,7 +265,7 @@ export default function Home() {
 
       <section className="glossary-section shell" id="glossary">
         <div className="section-heading">
-          <div><span className="section-number">04</span><p className="label">TERMINOLOGY, DECODED</p></div>
+          <div><span className="section-number">05</span><p className="label">TERMINOLOGY, DECODED</p></div>
           <h2>The jargon,<br /><i>in plain English.</i></h2>
           <p>Filter the glossary by compiler level, analysis concept, optimization pass, or machine term.</p>
         </div>
@@ -192,7 +279,7 @@ export default function Home() {
 
       <section className="bundle-section shell">
         <div className="bundle-copy">
-          <span className="section-number">05</span>
+          <span className="section-number">06</span>
           <p className="label">WHY VLIW IS THE ENDGAME</p>
           <h2>A bundle is a<br /><i>tiny schedule.</i></h2>
           <p>Every row below is one cycle. Different engines can work together, but operations in the same bundle read the old state—so dependent instructions must wait.</p>
@@ -206,8 +293,40 @@ export default function Home() {
             ["185", "gather B", "mask & 1", "A ^ key", "—"],
             ["186", "—", "2 × idx", "A × C + D", "—"],
             ["187", "vstore A", "+ parity", "hash₈(A)", "jump loop"],
-          ].map((row, ri) => <div className="bundle-row" key={row[0]}>{row.map((cell, ci) => <span className={cell === "—" ? "empty" : `c${ci}`} key={`${cell}-${ci}`}>{cell}</span>)}</div>)}
+          ].map(row => <div className="bundle-row" key={row[0]}>{row.map((cell, ci) => <span className={cell === "—" ? "empty" : `c${ci}`} key={`${cell}-${ci}`}>{cell}</span>)}</div>)}
           <p className="bundle-note"><span>●</span> Slots are illustrative; the final schedule is produced from the dependency graph.</p>
+        </div>
+      </section>
+
+      <section className="benchmark-section" id="benchmarks">
+        <div className="shell">
+          <div className="section-heading inverse">
+            <div><span className="section-number">07</span><p className="label">PERFORMANCE CONTEXT</p></div>
+            <h2>Cycles are the<br /><i>scoreboard.</i></h2>
+            <p>Anthropic publishes these reference results for the later two-hour version that started at 18,532 cycles. They provide context—not an AI-Comp result claim.</p>
+          </div>
+          <div className="benchmark-chart" role="img" aria-label="Published Anthropic benchmark speedups relative to the 18,532-cycle two-hour starter">
+            <div className="chart-axis"><span>1×</span><span>4×</span><span>8×</span><span>12×</span><span>13.6×</span></div>
+            {benchmarkLadder.map(item => (
+              <div className={`benchmark-row ${item.kind ?? ""}`} key={item.label}>
+                <div className="benchmark-label"><b>{item.label}</b><span>{item.cycles.toLocaleString()} cycles</span></div>
+                <div className="benchmark-bar-track"><span style={{width: `${(item.speedup / 13.6) * 100}%`}}><b>{item.speedup.toFixed(item.speedup === 1 ? 1 : 2)}×</b></span></div>
+              </div>
+            ))}
+          </div>
+          <div className="benchmark-note"><b>How to read it</b><p>Lower cycle count means higher speedup. The open challenge README warns that correctness tests must remain unchanged; an invalid shortcut is not an optimization.</p><a href="https://github.com/anthropics/original_performance_takehome#performance-benchmarks" target="_blank" rel="noreferrer">Official benchmark table ↗</a></div>
+        </div>
+      </section>
+
+      <section className="sources-section shell" id="sources">
+        <div className="section-heading">
+          <div><span className="section-number">08</span><p className="label">REVIEWED SOURCES</p></div>
+          <h2>Trace every claim<br /><i>to a source.</i></h2>
+          <p>Reviewed 16 July 2026. Project-specific behavior is checked against the current AI-Comp main branch; general terminology is cross-checked with official LLVM and Perfetto documentation.</p>
+        </div>
+        <div className="review-status"><span>✓</span><div><b>Correctness review completed</b><p>AI-Comp clone matched origin/main at review time. Default pass order, VLEN=8, scratch=1,536 words, slot limits, pre-bundle read semantics, scheduler rules, and default spill setting were checked in source.</p></div></div>
+        <div className="source-list">
+          {sources.map((source, index) => <a href={source.url} target="_blank" rel="noreferrer" key={source.title}><span>{String(index + 1).padStart(2, "0")}</span><div><small>{source.group}</small><h3>{source.title}</h3><p>{source.note}</p></div><b>↗</b></a>)}
         </div>
       </section>
 
