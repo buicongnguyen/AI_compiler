@@ -22,6 +22,10 @@ test("server-renders the AI-Comp explainer and social metadata", async () => {
   const html = await response.text();
   assert.match(html, /<title>AI-Comp Decoded/);
   assert.match(html, /How a compiler/);
+  assert.match(html, /START HERE · 60-SECOND TOUR/);
+  assert.match(html, /256 × 16 = 4,096 updates/);
+  assert.match(html, /If you see this bottleneck/);
+  assert.match(html, /Repeated or unused work/);
   assert.match(html, /Intent in\./);
   assert.match(html, /Eight moves\./);
   assert.match(html, /See the compiler/);
@@ -30,11 +34,9 @@ test("server-renders the AI-Comp explainer and social metadata", async () => {
   assert.match(html, /CODE, BEFORE AND AFTER/);
   assert.match(html, /SLP vectorization/);
   assert.match(html, /8 scalar additions/);
-  assert.match(html, /HOW THE TERMS CONNECT/);
-  assert.match(html, /PROGRAM REPRESENTATION · IR/);
-  assert.match(html, /ANALYSIS · PROVE/);
-  assert.match(html, /PASSES · TRANSFORM/);
-  assert.match(html, /MACHINE · CONSTRAIN/);
+  assert.match(html, /ONE FLOW · FOUR QUESTIONS/);
+  assert.match(html, /READ ONE REAL CHAIN/);
+  assert.match(html, /OPEN DEFINITIONS/);
   assert.match(html, /Represent the program/);
   assert.match(html, /Prove what is safe/);
   assert.match(html, /Transform the program/);
@@ -44,6 +46,8 @@ test("server-renders the AI-Comp explainer and social metadata", async () => {
   assert.match(html, /REVIEWED SOURCES/);
   assert.match(html, /Anthropic original performance take-home/);
   assert.match(html, /LLVM auto-vectorization documentation/);
+  assert.match(html, /LLVM target-independent code generator/);
+  assert.match(html, /MLIR rationale/);
   assert.match(html, /WHY VLIW IS THE ENDGAME/);
   assert.match(html, /https:\/\/github\.com\/fiigii\/ai-comp/);
   assert.match(html, /property="og:image" content="https?:\/\/[^\"]+\/og\.png"/);

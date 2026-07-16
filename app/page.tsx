@@ -37,6 +37,67 @@ const stages = [
   },
 ];
 
+const walkthroughSteps = [
+  {
+    id: "work",
+    step: "01",
+    label: "Workload",
+    title: "Start with repeated work",
+    question: "What is the compiler trying to speed up?",
+    summary: "The default kernel updates 256 independent items through 16 tree-traversal and hash rounds.",
+    plain: "That is 4,096 logical item-round updates. This number describes the workload—not the final instruction or cycle count.",
+    metric: "256 × 16 = 4,096 updates",
+  },
+  {
+    id: "clean",
+    step: "02",
+    label: "Clean",
+    title: "Remove work before packing it",
+    question: "Why optimize scalar code first?",
+    summary: "Unrolling exposes repeated statements; simplification, CSE, DCE, SROA, and load elimination then remove avoidable work.",
+    plain: "Vectorizing waste would only perform the same waste eight lanes at a time. Cleanup makes the later dependency graph smaller.",
+    metric: "less work + fewer edges",
+  },
+  {
+    id: "vector",
+    step: "03",
+    label: "Pack ×8",
+    title: "Turn eight similar operations into one",
+    question: "Where does SIMD enter?",
+    summary: "SLP finds independent scalar statements with the same shape and combines them into the VM’s eight-lane vector operations.",
+    plain: "One vector instruction can update eight values, provided the statements are independent and the memory access is legal.",
+    metric: "8 scalar ops → 1 VALU op",
+  },
+  {
+    id: "schedule",
+    step: "04",
+    label: "Schedule",
+    title: "Overlap different engines",
+    question: "Why is vectorization not enough?",
+    summary: "The scheduler places ready load, scalar ALU, vector ALU, store, and flow operations into the same VLIW bundle.",
+    plain: "Independent operations can share a cycle. A consumer waits because every slot in a bundle reads the machine state from before that bundle.",
+    metric: "fuller bundles + fewer stalls",
+  },
+  {
+    id: "measure",
+    step: "05",
+    label: "Measure",
+    title: "Count cycles, verify meaning",
+    question: "How does the compiler know it improved?",
+    summary: "The VM executes one legal non-debug bundle per cycle, so fewer executed bundles means a better score.",
+    plain: "The output indices, values, and observable memory must remain identical. A faster wrong answer is not an optimization.",
+    metric: "same result · fewer cycles",
+  },
+];
+
+const bottleneckMap = [
+  { symptom: "Repeated or unused work", move: "CSE · DCE · simplify", result: "fewer instructions and dependency edges", measure: "instruction count" },
+  { symptom: "Loads crowd the bundle", move: "SROA · load elimination · DSE", result: "less demand for two load / two store slots", measure: "memory traffic" },
+  { symptom: "Same scalar shape repeats", move: "SLP vectorization", result: "eight values share one VALU instruction", measure: "lane utilization" },
+  { symptom: "Ready engines sit idle", move: "DDG + list scheduling", result: "independent engines share more bundles", measure: "bundle occupancy" },
+  { symptom: "Too many values stay live", move: "regalloc + pressure profiling", result: "fit values into 1,536 scratch words", measure: "scratch pressure" },
+];
+
 const techniques = [
   { n: "01", name: "Expose the work", optimizes: "Parallelism", detail: "Loop unrolling duplicates the hot traversal body, revealing operations from several iterations that can execute together.", change: "fewer loop branches · larger scheduling window" },
   { n: "02", name: "Delete the noise", optimizes: "Instruction count", detail: "DCE removes unused results. CSE reuses repeated expressions. Copy propagation, folding, and CFG cleanup repeatedly shrink the program as new opportunities appear.", change: "less work · shorter dependency chains" },
@@ -151,6 +212,8 @@ const sources = [
   { group: "LLVM", title: "LLVM auto-vectorization documentation", url: "https://llvm.org/docs/Vectorizers.html", note: "Independent confirmation of SLP’s purpose and the tradeoff between unrolling, parallelism, register pressure, and code size." },
   { group: "LLVM", title: "LLVM alias-analysis infrastructure", url: "https://llvm.org/docs/AliasAnalysis.html", note: "Reference terminology for MustAlias, MayAlias, NoAlias, and memory modification/reference queries." },
   { group: "LLVM", title: "LLVM IR language reference", url: "https://llvm.org/docs/LangRef.html#phi-instruction", note: "Primary reference for SSA-oriented IR and phi nodes at control-flow merges." },
+  { group: "LLVM", title: "LLVM target-independent code generator", url: "https://llvm.org/docs/CodeGenerator.html", note: "Official overview of instruction selection, scheduling, machine optimization, register allocation, spilling, and code emission." },
+  { group: "MLIR", title: "MLIR rationale", url: "https://mlir.llvm.org/docs/Rationale/Rationale/", note: "General context for multi-level IR: progressively lower a program while preserving forms that are useful for analysis and target-specific optimization." },
   { group: "Tool", title: "Perfetto UI documentation", url: "https://perfetto.dev/docs/visualization/perfetto-ui", note: "How the trace viewer used by the project presents execution events on a navigable timeline." },
 ];
 
@@ -212,11 +275,87 @@ const codeExamples = [
   },
 ];
 
+function WalkthroughVisual({ step }: { step: string }) {
+  if (step === "work") {
+    return (
+      <div className="walkthrough-visual workload-visual" role="img" aria-label="256 items times 16 rounds equals 4,096 logical item-round updates">
+        <div className="workload-equation"><span><b>256</b><small>items</small></span><i>×</i><span><b>16</b><small>rounds</small></span><i>=</i><span className="total"><b>4,096</b><small>logical updates</small></span></div>
+        <div className="workload-loop">
+          <div className="mini-tree"><span /><span /><span /><span /><span /><span /><span /></div>
+          <b>load node</b><i>→</i><b>hash value</b><i>→</i><b>choose child</b><i>↺</i>
+        </div>
+        <p>Many items follow the same algorithm, which creates parallel work the compiler can expose.</p>
+      </div>
+    );
+  }
+
+  if (step === "clean") {
+    return (
+      <div className="walkthrough-visual cleanup-visual" role="img" aria-label="Repeated and dead scalar operations are removed before vectorization">
+        <div className="cleanup-before">
+          <span>xor x, key</span><span className="repeat">xor x, key</span><span>add index, 1</span><span className="dead">unused + 0</span><span>load addr</span><span className="repeat">load addr</span>
+        </div>
+        <div className="cleanup-arrow"><small>CSE · DCE · LOAD ELIM</small><b>→</b></div>
+        <div className="cleanup-after"><span>xor x, key</span><span>add index, 1</span><span>load addr</span></div>
+        <p>Crossed-out work disappears; repeated work is reused.</p>
+      </div>
+    );
+  }
+
+  if (step === "vector") {
+    return (
+      <div className="walkthrough-visual vector-visual" role="img" aria-label="Eight independent scalar additions become one eight-lane vector addition">
+        <div className="scalar-stack">{Array.from({ length: 8 }, (_, index) => <span key={index}>a{index} + b{index}</span>)}</div>
+        <div className="vector-arrow"><small>SLP proves<br />independence</small><b>→</b></div>
+        <div className="vector-register"><small>ONE VALU OPERATION</small><b>vadd × 8</b><div>{Array.from({ length: 8 }, (_, index) => <span key={index}>L{index}</span>)}</div></div>
+        <p>Same operation, eight lanes, one vector opcode.</p>
+      </div>
+    );
+  }
+
+  if (step === "schedule") {
+    return (
+      <div className="walkthrough-visual schedule-visual" role="img" aria-label="A dependency graph is packed into three legal VLIW cycles">
+        <div className="schedule-deps">
+          <div><span className="load">load A</span><span className="load">load B</span></div>
+          <i>↓ values ready next bundle</i>
+          <div><span className="valu">xor₈</span><span className="alu">index + 1</span></div>
+          <i>↓ xor result ready next bundle</i>
+          <div><span className="valu">MAD₈</span></div>
+        </div>
+        <div className="schedule-pack"><small>PACK READY WORK</small><b>→</b></div>
+        <div className="schedule-cycles">
+          <div><b>C0</b><span className="load">load A · load B</span></div>
+          <div><b>C1</b><span className="valu">xor₈</span><span className="alu">index + 1</span></div>
+          <div><b>C2</b><span className="valu">MAD₈</span></div>
+        </div>
+        <p>Horizontal means “same cycle”; vertical means “must wait.”</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="walkthrough-visual measure-visual" role="img" aria-label="Correctness stays fixed while executed VLIW bundles and cycle count are reduced">
+      <div className="correctness-lock"><span>✓</span><div><small>FIXED</small><b>same indices + values</b></div></div>
+      <div className="measure-arrow">while</div>
+      <div className="bundle-comparison">
+        <div><small>BEFORE</small><span /><span /><span /><span /><span /><span /></div>
+        <b>→</b>
+        <div className="after"><small>AFTER</small><span /><span /><span /><span /></div>
+      </div>
+      <div className="cycle-result"><small>MINIMIZE</small><b>executed bundles = cycles</b></div>
+      <p>Illustrative direction only: the site does not claim a measured AI-Comp cycle result.</p>
+    </div>
+  );
+}
+
 export default function Home() {
   const [active, setActive] = useState(0);
+  const [walkthroughActive, setWalkthroughActive] = useState(0);
   const [termFilter, setTermFilter] = useState("All");
   const [exampleActive, setExampleActive] = useState(0);
   const stage = stages[active];
+  const walkthrough = walkthroughSteps[walkthroughActive];
   const codeExample = codeExamples[exampleActive];
   const visibleTermGroups = termFilter === "All" ? termFlowGroups : termFlowGroups.filter(group => group.category === termFilter);
 
@@ -225,10 +364,10 @@ export default function Home() {
       <nav className="nav shell" aria-label="Primary navigation">
         <a className="brand" href="#top" aria-label="AI-Comp decoded home"><span className="brand-mark">A/C</span><span>AI-COMP<br />DECODED</span></a>
         <div className="nav-links">
+          <a href="#start-here">Start here</a>
           <a href="#pipeline">Pipeline</a>
-          <a href="#diagrams">Diagrams</a>
           <a href="#examples">Examples</a>
-          <a href="#targets">Targets</a>
+          <a href="#glossary">Terms</a>
           <a href="#sources">Sources</a>
           <a className="source-link" href="https://github.com/fiigii/ai-comp" target="_blank" rel="noreferrer">Source ↗</a>
         </div>
@@ -239,7 +378,7 @@ export default function Home() {
         <h1>How a compiler<br />finds <em>parallelism.</em></h1>
         <p className="hero-copy">AI-Comp replaces hand-tuned kernel code with an optimizing compiler that turns a readable tree-traversal and hash program into tightly packed VLIW SIMD bundles.</p>
         <div className="hero-actions">
-          <a className="button primary" href="#pipeline">Walk the pipeline <span>↓</span></a>
+          <a className="button primary" href="#start-here">Start the 60-second tour <span>↓</span></a>
           <a className="button ghost" href="https://github.com/fiigii/ai-comp/blob/main/Readme.md" target="_blank" rel="noreferrer">Read the README ↗</a>
         </div>
         <div className="hero-grid" aria-label="Project facts">
@@ -251,6 +390,52 @@ export default function Home() {
       </section>
 
       <section className="marquee" aria-label="Optimization pass sequence"><div>{[...passes, ...passes].map((pass, i) => <span key={`${pass}-${i}`}>{pass}<b>◆</b></span>)}</div></section>
+
+      <section className="start-section shell" id="start-here">
+        <div className="section-heading">
+          <div><span className="section-number">00</span><p className="label">START HERE · 60-SECOND TOUR</p></div>
+          <h2>Follow one idea<br /><i>from work to cycles.</i></h2>
+          <p>Read these five steps first. They are the shortest path through the page; every later section expands one part of this flow.</p>
+        </div>
+
+        <div className="walkthrough-flow" role="tablist" aria-label="Five-step beginner walkthrough">
+          {walkthroughSteps.map((item, index) => (
+            <button key={item.id} role="tab" aria-selected={walkthroughActive === index} className={walkthroughActive === index ? "active" : ""} onClick={() => setWalkthroughActive(index)}>
+              <span>{item.step}</span><b>{item.label}</b><i>{index < walkthroughSteps.length - 1 ? "→" : "✓"}</i>
+            </button>
+          ))}
+        </div>
+
+        <article className="walkthrough-panel" role="tabpanel">
+          <div className="walkthrough-copy">
+            <span>STEP {walkthrough.step} · {walkthrough.label}</span>
+            <h3>{walkthrough.title}</h3>
+            <b>{walkthrough.question}</b>
+            <p>{walkthrough.summary}</p>
+            <p>{walkthrough.plain}</p>
+            <small>{walkthrough.metric}</small>
+          </div>
+          <WalkthroughVisual step={walkthrough.id} />
+        </article>
+
+        <div className="reading-route">
+          <span>BEGINNER ROUTE</span>
+          <a href="#pipeline"><b>1</b> See the changing program</a><i>→</i>
+          <a href="#examples"><b>2</b> Inspect concrete rewrites</a><i>→</i>
+          <a href="#glossary"><b>3</b> Decode terms when needed</a>
+        </div>
+
+        <article className="bottleneck-map" aria-label="Map from compiler bottlenecks to optimization passes and measurable results">
+          <div className="bottleneck-heading"><div><span>DECISION MAP</span><h3>If you see this bottleneck, what does the compiler try?</h3></div><p>This is the practical relationship between jargon and performance. A pass is useful only when it attacks a real limit.</p></div>
+          <div className="bottleneck-columns"><span>BOTTLENECK</span><span>COMPILER MOVE</span><span>WHAT CHANGES</span><span>WATCH THIS</span></div>
+          {bottleneckMap.map(item => (
+            <div className="bottleneck-row" key={item.symptom}>
+              <b>{item.symptom}</b><i>→</i><span>{item.move}</span><i>→</i><p>{item.result}</p><small>{item.measure}</small>
+            </div>
+          ))}
+          <p className="bottleneck-note">The rows are diagnostic paths, not a guaranteed order. Passes interact: for example, unrolling exposes vector work but can also raise register pressure.</p>
+        </article>
+      </section>
 
       <section className="pipeline-section shell" id="pipeline">
         <div className="section-heading">
@@ -395,43 +580,29 @@ export default function Home() {
         <div className="section-heading">
           <div><span className="section-number">06</span><p className="label">TERMINOLOGY, DECODED</p></div>
           <h2>The jargon,<br /><i>in plain English.</i></h2>
-          <p>Start with the concept map, then filter the definitions by program representation, analysis, optimization pass, or target-machine term.</p>
+          <p>Read terminology in the order it appears during compilation. Open a stage only when you need its detailed definitions.</p>
         </div>
-        <div className="terminology-map" aria-label="Concept map connecting compiler representations, analyses, optimization passes, and machine constraints">
-          <div className="map-header"><span>HOW THE TERMS CONNECT</span><p>{termCategoryDetails[termFilter]}</p></div>
-          <button className={`map-ir ${termFilter === "All" || termFilter === "IR" ? "active" : "muted"}`} onClick={() => setTermFilter("IR")} aria-pressed={termFilter === "IR"}>
-            <span className="map-category">PROGRAM REPRESENTATION · IR</span>
-            <div className="ir-flow">
-              <div><small>STRUCTURED</small><b>HIR</b><span>loops · SSA · pointers</span></div><i>→ lower</i>
-              <div><small>MACHINE-LIKE</small><b>LIR</b><span>blocks · explicit ops</span></div><i>→ schedule</i>
-              <div><small>SCHEDULED</small><b>MIR</b><span>bundles · live ranges</span></div><i>→ allocate</i>
-              <div><small>EXECUTABLE</small><b>VLIW</b><span>engine slots / cycle</span></div>
-            </div>
-          </button>
-          <div className="map-down"><span>facts about the program</span>↓</div>
-          <div className="map-layers">
-            <button className={`map-layer analysis ${termFilter === "All" || termFilter === "Analysis" ? "active" : "muted"}`} onClick={() => setTermFilter("Analysis")} aria-pressed={termFilter === "Analysis"}>
-              <span className="map-category">ANALYSIS · PROVE</span>
-              <b>What is true?</b>
-              <div><span>SSA</span><span>CFG</span><span>DDG</span><span>Alias</span><span>Critical path</span></div>
-              <small>No code changes yet</small>
-            </button>
-            <div className="map-side-arrow"><span>enables safe rewrites</span>→</div>
-            <button className={`map-layer pass ${termFilter === "All" || termFilter === "Pass" ? "active" : "muted"}`} onClick={() => setTermFilter("Pass")} aria-pressed={termFilter === "Pass"}>
-              <span className="map-category">PASSES · TRANSFORM</span>
-              <b>What can improve?</b>
-              <div><span>DCE</span><span>CSE</span><span>SROA</span><span>SLP</span><span>MAD</span><span>Schedule</span></div>
-              <small>Rewrite while preserving meaning</small>
-            </button>
-            <div className="map-side-arrow"><span>must fit target limits</span>→</div>
-            <button className={`map-layer machine ${termFilter === "All" || termFilter === "Machine" ? "active" : "muted"}`} onClick={() => setTermFilter("Machine")} aria-pressed={termFilter === "Machine"}>
-              <span className="map-category">MACHINE · CONSTRAIN</span>
-              <b>What is legal?</b>
-              <div><span>SIMD</span><span>RAW</span><span>Gather</span><span>Pressure</span><span>Spill</span></div>
-              <small>Width · storage · ordering · slots</small>
-            </button>
+        <div className="term-story" aria-label="Terminology grouped by the order concepts appear in the compiler">
+          <div className="term-story-header"><span>ONE FLOW · FOUR QUESTIONS</span><p>{termCategoryDetails[termFilter]}</p></div>
+          <div className="term-story-flow">
+            {termFlowGroups.map((group, index) => (
+              <div className="term-story-step" key={group.category}>
+                <button className={`${group.category.toLowerCase()} ${termFilter === "All" || termFilter === group.category ? "active" : "muted"}`} onClick={() => setTermFilter(group.category)} aria-pressed={termFilter === group.category}>
+                  <span>{group.step}</span><small>{group.category}</small><h3>{group.title}</h3><b>{group.question}</b>
+                  <p>{group.summary}</p>
+                  <div>{group.order.slice(0, 5).map(term => <i key={term}>{term}</i>)}</div>
+                </button>
+                {index < termFlowGroups.length - 1 && <span className="term-story-arrow"><small>{group.transition}</small>→</span>}
+              </div>
+            ))}
           </div>
-          <div className="map-loop"><span>← metrics and generated bundles reveal the next optimization opportunity</span></div>
+          <div className="term-story-example">
+            <span>READ ONE REAL CHAIN</span>
+            <div><b>SSA + DDG</b><small>prove eight adds are independent</small></div><i>→</i>
+            <div><b>SLP</b><small>packs those adds together</small></div><i>→</i>
+            <div><b>SIMD / VALU</b><small>executes eight lanes</small></div><i>→</i>
+            <div><b>VLIW</b><small>shares the cycle with other engines</small></div>
+          </div>
         </div>
         <div className="term-filters" aria-label="Glossary categories">
           {["All", "IR", "Analysis", "Pass", "Machine"].map(filter => <button key={filter} className={termFilter === filter ? "active" : ""} onClick={() => setTermFilter(filter)} aria-pressed={termFilter === filter}>{filter}<span>{filter === "All" ? terms.length : terms.filter(item => item.category === filter).length}</span></button>)}
@@ -440,17 +611,18 @@ export default function Home() {
           {visibleTermGroups.map(group => {
             const groupTerms = group.order.map(termName => terms.find(item => item.term === termName)).filter((item): item is typeof terms[number] => Boolean(item));
             return (
-              <section className={`term-flow-group ${group.category.toLowerCase()}`} key={group.category}>
-                <div className="term-group-heading">
+              <details className={`term-flow-group ${group.category.toLowerCase()}`} key={group.category} open={termFilter !== "All" || group.category === "IR"}>
+                <summary className="term-group-heading">
                   <span>{group.step}</span>
                   <div><small>{group.category}</small><h3>{group.title}</h3><b>{group.question}</b></div>
                   <p>{group.summary}</p>
-                </div>
+                  <i>OPEN DEFINITIONS</i>
+                </summary>
                 <div className="term-group-grid">
                   {groupTerms.map((item, index) => <article key={item.term}><span className="term-index">{group.step}.{index + 1}</span><div><h4>{item.term}</h4><b>{item.expansion}</b></div><p>{item.definition}</p></article>)}
                 </div>
                 {(termFilter === "All" || group.category === "Machine") && <div className={`term-transition ${group.category === "Machine" ? "feedback" : ""}`}><span>{group.transition}</span><b>{group.category === "Machine" ? "↺" : "↓"}</b></div>}
-              </section>
+              </details>
             );
           })}
         </div>
