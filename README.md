@@ -4,7 +4,7 @@ An interactive visual explanation of the techniques used by [fiigii/ai-comp](htt
 
 **Live site:** <https://buicongnguyen.github.io/AI_compiler/>
 
-The page follows the compiler from HIR through LIR and MIR to final VLIW bundles. It explains what the compiler optimizes—cycle count, instruction count, memory traffic, SIMD utilization, bundle occupancy, and register pressure—then decodes the major passes and terminology in a filterable glossary. Source-reviewed pipeline, memory, dependency, and scheduling diagrams connect the concepts, while an Anthropic benchmark chart provides carefully labeled performance context.
+The page follows the compiler from HIR through LIR and MIR to final VLIW bundles. It explains what the compiler optimizes—cycle count, instruction count, memory traffic, SIMD utilization, bundle occupancy, and register pressure—then decodes the major passes and terminology in a filterable glossary. Source-reviewed diagrams connect the concepts, before/after code examples make five important rewrites concrete, and an Anthropic benchmark chart provides carefully labeled performance context.
 
 ## Run locally
 

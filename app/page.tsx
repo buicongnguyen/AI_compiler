@@ -107,10 +107,70 @@ const sources = [
   { group: "Tool", title: "Perfetto UI documentation", url: "https://perfetto.dev/docs/visualization/perfetto-ui", note: "How the trace viewer used by the project presents execution events on a navigable timeline." },
 ];
 
+const codeExamples = [
+  {
+    id: "SLP",
+    title: "SLP vectorization",
+    question: "How do scalar statements become one SIMD operation?",
+    beforeLabel: "Independent scalar work",
+    before: ["r0 = a0 + b0", "r1 = a1 + b1", "r2 = a2 + b2", "…", "r7 = a7 + b7"],
+    afterLabel: "One 8-lane vector operation",
+    after: ["vr = vadd(", "  <a0, a1, …, a7>,", "  <b0, b1, …, b7>", ")"],
+    explanation: "The statements have the same opcode and type, and none depends on another. SLP can pack them after legality and profitability checks.",
+    effect: "8 scalar additions → 1 VALU instruction",
+  },
+  {
+    id: "CSE + DCE",
+    title: "Reuse, then delete",
+    question: "Why do cleanup passes run repeatedly?",
+    beforeLabel: "Repeated and unused work",
+    before: ["t0 = x ^ key", "t1 = x ^ key", "dead = t1 + 0", "out = t0"],
+    afterLabel: "After CSE, simplify, and DCE",
+    after: ["t0 = x ^ key", "out = t0"],
+    explanation: "CSE recognizes that t1 repeats t0. Simplification removes the + 0 identity, then DCE removes the value because nothing observable uses it.",
+    effect: "fewer instructions · shorter dependency graph",
+  },
+  {
+    id: "LOAD",
+    title: "Safe load forwarding",
+    question: "When can a memory read disappear?",
+    beforeLabel: "Store followed by a proven reload",
+    before: ["store(addr, new_idx)", "…  // no may-alias store", "idx = load(addr)", "use(idx)"],
+    afterLabel: "Forward the known value",
+    after: ["store(addr, new_idx)", "…", "use(new_idx)", "// load removed"],
+    explanation: "The store and load must refer to the same normalized address, and no intervening store may overlap it. If analysis is uncertain, the load stays.",
+    effect: "one load removed without changing memory behavior",
+  },
+  {
+    id: "MAD",
+    title: "Multiply-add synthesis",
+    question: "How does an expression become a target instruction?",
+    beforeLabel: "Two vector operations",
+    before: ["tmp = vmul(va, vb)", "out = vadd(tmp, vc)"],
+    afterLabel: "One fused target operation",
+    after: ["out = multiply_add(", "  va, vb, vc", ")"],
+    explanation: "The compiler first canonicalizes the expression, then MAD synthesis fuses it when def-use and profitability conditions make the rewrite safe.",
+    effect: "2 VALU operations → 1 VALU operation",
+  },
+  {
+    id: "SCHEDULE",
+    title: "Dependency-aware bundling",
+    question: "What can execute in the same cycle?",
+    beforeLabel: "Ready operations and dependencies",
+    before: ["A = load(addrA)", "B = load(addrB)", "C = vxor(A, B)", "i2 = add(i, 1)", "D = multiply_add(C, K, V)"],
+    afterLabel: "Legal VLIW schedule",
+    after: ["cycle 0  load: [A, B]", "cycle 1  valu: [vxor C]", "         alu:  [add i2]", "cycle 2  valu: [MAD D]"],
+    explanation: "The two loads can share cycle 0. The independent scalar add can share cycle 1 with xor. MAD waits until a later bundle because it reads xor’s result.",
+    effect: "parallel engines fill slots while RAW edges preserve order",
+  },
+];
+
 export default function Home() {
   const [active, setActive] = useState(0);
   const [termFilter, setTermFilter] = useState("All");
+  const [exampleActive, setExampleActive] = useState(0);
   const stage = stages[active];
+  const codeExample = codeExamples[exampleActive];
   const visibleTerms = termFilter === "All" ? terms : terms.filter(item => item.category === termFilter);
 
   return (
@@ -120,6 +180,7 @@ export default function Home() {
         <div className="nav-links">
           <a href="#pipeline">Pipeline</a>
           <a href="#diagrams">Diagrams</a>
+          <a href="#examples">Examples</a>
           <a href="#targets">Targets</a>
           <a href="#sources">Sources</a>
           <a className="source-link" href="https://github.com/fiigii/ai-comp" target="_blank" rel="noreferrer">Source ↗</a>
@@ -263,9 +324,29 @@ export default function Home() {
         </div>
       </section>
 
+      <section className="examples-section shell" id="examples">
+        <div className="section-heading">
+          <div><span className="section-number">05</span><p className="label">CODE, BEFORE AND AFTER</p></div>
+          <h2>Make the rewrite<br /><i>concrete.</i></h2>
+          <p>These compact examples illustrate the transformation pattern. They use readable pseudocode rather than copying a full compiler dump.</p>
+        </div>
+        <div className="example-tabs" role="tablist" aria-label="Compiler code examples">
+          {codeExamples.map((example, index) => <button key={example.id} role="tab" aria-selected={exampleActive === index} className={exampleActive === index ? "active" : ""} onClick={() => setExampleActive(index)}><span>0{index + 1}</span>{example.id}</button>)}
+        </div>
+        <article className="example-workbench" role="tabpanel">
+          <div className="example-intro"><span>{codeExample.title}</span><h3>{codeExample.question}</h3><p>{codeExample.explanation}</p><div><b>Optimization effect</b><small>{codeExample.effect}</small></div></div>
+          <div className="example-code">
+            <div className="example-pane before"><div><span>BEFORE</span><b>{codeExample.beforeLabel}</b></div><pre>{codeExample.before.map((line, index) => <code key={`${line}-${index}`}><span>{String(index + 1).padStart(2, "0")}</span>{line}</code>)}</pre></div>
+            <div className="transform-arrow"><span>PASS</span>→</div>
+            <div className="example-pane after"><div><span>AFTER</span><b>{codeExample.afterLabel}</b></div><pre>{codeExample.after.map((line, index) => <code key={`${line}-${index}`}><span>{String(index + 1).padStart(2, "0")}</span>{line}</code>)}</pre></div>
+          </div>
+          <p className="example-caveat"><b>Correctness guard:</b> the compiler applies each rewrite only when its analysis proves the relevant independence, aliasing, use-count, control-flow, and bundle constraints.</p>
+        </article>
+      </section>
+
       <section className="glossary-section shell" id="glossary">
         <div className="section-heading">
-          <div><span className="section-number">05</span><p className="label">TERMINOLOGY, DECODED</p></div>
+          <div><span className="section-number">06</span><p className="label">TERMINOLOGY, DECODED</p></div>
           <h2>The jargon,<br /><i>in plain English.</i></h2>
           <p>Filter the glossary by compiler level, analysis concept, optimization pass, or machine term.</p>
         </div>
@@ -279,7 +360,7 @@ export default function Home() {
 
       <section className="bundle-section shell">
         <div className="bundle-copy">
-          <span className="section-number">06</span>
+          <span className="section-number">07</span>
           <p className="label">WHY VLIW IS THE ENDGAME</p>
           <h2>A bundle is a<br /><i>tiny schedule.</i></h2>
           <p>Every row below is one cycle. Different engines can work together, but operations in the same bundle read the old state—so dependent instructions must wait.</p>
@@ -301,7 +382,7 @@ export default function Home() {
       <section className="benchmark-section" id="benchmarks">
         <div className="shell">
           <div className="section-heading inverse">
-            <div><span className="section-number">07</span><p className="label">PERFORMANCE CONTEXT</p></div>
+            <div><span className="section-number">08</span><p className="label">PERFORMANCE CONTEXT</p></div>
             <h2>Cycles are the<br /><i>scoreboard.</i></h2>
             <p>Anthropic publishes these reference results for the later two-hour version that started at 18,532 cycles. They provide context—not an AI-Comp result claim.</p>
           </div>
@@ -320,7 +401,7 @@ export default function Home() {
 
       <section className="sources-section shell" id="sources">
         <div className="section-heading">
-          <div><span className="section-number">08</span><p className="label">REVIEWED SOURCES</p></div>
+          <div><span className="section-number">09</span><p className="label">REVIEWED SOURCES</p></div>
           <h2>Trace every claim<br /><i>to a source.</i></h2>
           <p>Reviewed 16 July 2026. Project-specific behavior is checked against the current AI-Comp main branch; general terminology is cross-checked with official LLVM and Perfetto documentation.</p>
         </div>

@@ -27,6 +27,9 @@ test("server-renders the AI-Comp explainer and social metadata", async () => {
   assert.match(html, /See the compiler/);
   assert.match(html, /Data movement/);
   assert.match(html, /Dependency → schedule/);
+  assert.match(html, /CODE, BEFORE AND AFTER/);
+  assert.match(html, /SLP vectorization/);
+  assert.match(html, /8 scalar additions/);
   assert.match(html, /PERFORMANCE CONTEXT/);
   assert.match(html, /REVIEWED SOURCES/);
   assert.match(html, /Anthropic original performance take-home/);
@@ -47,6 +50,9 @@ test("ships the finished interactive source and social card", async () => {
   assert.match(page, /useState/);
   assert.match(page, /HIR/);
   assert.match(page, /SLP ×8/);
+  assert.match(page, /Safe load forwarding/);
+  assert.match(page, /Multiply-add synthesis/);
+  assert.match(page, /Dependency-aware bundling/);
   assert.match(layout, /generateMetadata/);
   assert.match(layout, /x-forwarded-host/);
   assert.match(packageJson, /"name": "ai-comp-explained"/);
