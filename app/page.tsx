@@ -82,6 +82,14 @@ const terms = [
   { category: "Machine", term: "Spilling", expansion: "Move live values to memory", definition: "When scratch is exhausted, save selected live values to memory and reload them later. AI-Comp implements this, but its default configuration disables it." },
 ];
 
+const termCategoryDetails: Record<string, string> = {
+  All: "Read the map from top to bottom: representations carry the program, analyses prove facts, passes rewrite it, and machine constraints determine what can share a cycle.",
+  IR: "IR is the program’s changing shape: HIR preserves structure, LIR exposes machine-like operations, MIR contains scheduled bundles, and VLIW is emitted for the VM.",
+  Analysis: "Analyses do not directly change code. They establish facts about values, control flow, memory overlap, dependencies, and critical paths that make later rewrites safe.",
+  Pass: "Optimization passes consume analysis facts and transform the program—removing work, combining operations, vectorizing lanes, or choosing a better schedule.",
+  Machine: "Machine terms describe the target limits the compiler must satisfy: vector width, scratch capacity, hazards, memory access forms, engine slots, and spill behavior.",
+};
+
 const passes = ["DCE", "UNROLL", "SIMPLIFY", "CSE", "SROA", "LOAD ELIM", "DSE", "SLSR", "SLP ×8", "MAD", "LOWER", "COPY PROP", "CFG", "PHI ELIM", "SCHEDULE", "REGALLOC", "VLIW"];
 
 const benchmarkLadder = [
@@ -348,7 +356,43 @@ export default function Home() {
         <div className="section-heading">
           <div><span className="section-number">06</span><p className="label">TERMINOLOGY, DECODED</p></div>
           <h2>The jargon,<br /><i>in plain English.</i></h2>
-          <p>Filter the glossary by compiler level, analysis concept, optimization pass, or machine term.</p>
+          <p>Start with the concept map, then filter the definitions by program representation, analysis, optimization pass, or target-machine term.</p>
+        </div>
+        <div className="terminology-map" aria-label="Concept map connecting compiler representations, analyses, optimization passes, and machine constraints">
+          <div className="map-header"><span>HOW THE TERMS CONNECT</span><p>{termCategoryDetails[termFilter]}</p></div>
+          <button className={`map-ir ${termFilter === "All" || termFilter === "IR" ? "active" : "muted"}`} onClick={() => setTermFilter("IR")} aria-pressed={termFilter === "IR"}>
+            <span className="map-category">PROGRAM REPRESENTATION · IR</span>
+            <div className="ir-flow">
+              <div><small>STRUCTURED</small><b>HIR</b><span>loops · SSA · pointers</span></div><i>→ lower</i>
+              <div><small>MACHINE-LIKE</small><b>LIR</b><span>blocks · explicit ops</span></div><i>→ schedule</i>
+              <div><small>SCHEDULED</small><b>MIR</b><span>bundles · live ranges</span></div><i>→ allocate</i>
+              <div><small>EXECUTABLE</small><b>VLIW</b><span>engine slots / cycle</span></div>
+            </div>
+          </button>
+          <div className="map-down"><span>facts about the program</span>↓</div>
+          <div className="map-layers">
+            <button className={`map-layer analysis ${termFilter === "All" || termFilter === "Analysis" ? "active" : "muted"}`} onClick={() => setTermFilter("Analysis")} aria-pressed={termFilter === "Analysis"}>
+              <span className="map-category">ANALYSIS · PROVE</span>
+              <b>What is true?</b>
+              <div><span>SSA</span><span>CFG</span><span>DDG</span><span>Alias</span><span>Critical path</span></div>
+              <small>No code changes yet</small>
+            </button>
+            <div className="map-side-arrow"><span>enables safe rewrites</span>→</div>
+            <button className={`map-layer pass ${termFilter === "All" || termFilter === "Pass" ? "active" : "muted"}`} onClick={() => setTermFilter("Pass")} aria-pressed={termFilter === "Pass"}>
+              <span className="map-category">PASSES · TRANSFORM</span>
+              <b>What can improve?</b>
+              <div><span>DCE</span><span>CSE</span><span>SROA</span><span>SLP</span><span>MAD</span><span>Schedule</span></div>
+              <small>Rewrite while preserving meaning</small>
+            </button>
+            <div className="map-side-arrow"><span>must fit target limits</span>→</div>
+            <button className={`map-layer machine ${termFilter === "All" || termFilter === "Machine" ? "active" : "muted"}`} onClick={() => setTermFilter("Machine")} aria-pressed={termFilter === "Machine"}>
+              <span className="map-category">MACHINE · CONSTRAIN</span>
+              <b>What is legal?</b>
+              <div><span>SIMD</span><span>RAW</span><span>Gather</span><span>Pressure</span><span>Spill</span></div>
+              <small>Width · storage · ordering · slots</small>
+            </button>
+          </div>
+          <div className="map-loop"><span>← metrics and generated bundles reveal the next optimization opportunity</span></div>
         </div>
         <div className="term-filters" aria-label="Glossary categories">
           {["All", "IR", "Analysis", "Pass", "Machine"].map(filter => <button key={filter} className={termFilter === filter ? "active" : ""} onClick={() => setTermFilter(filter)} aria-pressed={termFilter === filter}>{filter}<span>{filter === "All" ? terms.length : terms.filter(item => item.category === filter).length}</span></button>)}

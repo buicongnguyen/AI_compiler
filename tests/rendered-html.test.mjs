@@ -30,6 +30,11 @@ test("server-renders the AI-Comp explainer and social metadata", async () => {
   assert.match(html, /CODE, BEFORE AND AFTER/);
   assert.match(html, /SLP vectorization/);
   assert.match(html, /8 scalar additions/);
+  assert.match(html, /HOW THE TERMS CONNECT/);
+  assert.match(html, /PROGRAM REPRESENTATION · IR/);
+  assert.match(html, /ANALYSIS · PROVE/);
+  assert.match(html, /PASSES · TRANSFORM/);
+  assert.match(html, /MACHINE · CONSTRAIN/);
   assert.match(html, /PERFORMANCE CONTEXT/);
   assert.match(html, /REVIEWED SOURCES/);
   assert.match(html, /Anthropic original performance take-home/);
