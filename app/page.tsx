@@ -90,6 +90,45 @@ const termCategoryDetails: Record<string, string> = {
   Machine: "Machine terms describe the target limits the compiler must satisfy: vector width, scratch capacity, hazards, memory access forms, engine slots, and spill behavior.",
 };
 
+const termFlowGroups = [
+  {
+    category: "IR",
+    step: "01",
+    title: "Represent the program",
+    question: "What form is the program in?",
+    summary: "The compiler carries the same algorithm through progressively more machine-specific representations.",
+    order: ["IR", "HIR", "LIR", "MIR"],
+    transition: "Analyses inspect these representations and establish facts.",
+  },
+  {
+    category: "Analysis",
+    step: "02",
+    title: "Prove what is safe",
+    question: "What does the compiler know?",
+    summary: "Data flow, control flow, memory relationships, and dependencies determine which transformations preserve behavior.",
+    order: ["SSA", "CFG", "Alias analysis", "DDG", "Critical path"],
+    transition: "Optimization passes consume those facts and rewrite the program.",
+  },
+  {
+    category: "Pass",
+    step: "03",
+    title: "Transform the program",
+    question: "What work can be removed or combined?",
+    summary: "Passes delete unnecessary work, expose scalar values, reduce arithmetic, create vectors, and select a schedule.",
+    order: ["CSE", "DCE / DSE", "SROA", "SLSR", "SLP", "MAD", "List scheduling"],
+    transition: "Every transformed operation must fit the target machine.",
+  },
+  {
+    category: "Machine",
+    step: "04",
+    title: "Satisfy the machine",
+    question: "What can legally execute?",
+    summary: "The final program must respect vector width, bundle semantics, memory access forms, scratch capacity, and hazards.",
+    order: ["SIMD / VALU", "VLIW", "RAW hazard", "Gather", "Register pressure", "Spilling"],
+    transition: "Generated bundles and metrics feed the next optimization iteration.",
+  },
+];
+
 const passes = ["DCE", "UNROLL", "SIMPLIFY", "CSE", "SROA", "LOAD ELIM", "DSE", "SLSR", "SLP ×8", "MAD", "LOWER", "COPY PROP", "CFG", "PHI ELIM", "SCHEDULE", "REGALLOC", "VLIW"];
 
 const benchmarkLadder = [
@@ -179,7 +218,7 @@ export default function Home() {
   const [exampleActive, setExampleActive] = useState(0);
   const stage = stages[active];
   const codeExample = codeExamples[exampleActive];
-  const visibleTerms = termFilter === "All" ? terms : terms.filter(item => item.category === termFilter);
+  const visibleTermGroups = termFilter === "All" ? termFlowGroups : termFlowGroups.filter(group => group.category === termFilter);
 
   return (
     <main>
@@ -397,8 +436,23 @@ export default function Home() {
         <div className="term-filters" aria-label="Glossary categories">
           {["All", "IR", "Analysis", "Pass", "Machine"].map(filter => <button key={filter} className={termFilter === filter ? "active" : ""} onClick={() => setTermFilter(filter)} aria-pressed={termFilter === filter}>{filter}<span>{filter === "All" ? terms.length : terms.filter(item => item.category === filter).length}</span></button>)}
         </div>
-        <div className="glossary-list">
-          {visibleTerms.map((item, index) => <article key={item.term}><span className="term-index">{String(index + 1).padStart(2,"0")}</span><div><span className="term-category">{item.category}</span><h3>{item.term}</h3><b>{item.expansion}</b></div><p>{item.definition}</p></article>)}
+        <div className="glossary-flow-list">
+          {visibleTermGroups.map(group => {
+            const groupTerms = group.order.map(termName => terms.find(item => item.term === termName)).filter((item): item is typeof terms[number] => Boolean(item));
+            return (
+              <section className={`term-flow-group ${group.category.toLowerCase()}`} key={group.category}>
+                <div className="term-group-heading">
+                  <span>{group.step}</span>
+                  <div><small>{group.category}</small><h3>{group.title}</h3><b>{group.question}</b></div>
+                  <p>{group.summary}</p>
+                </div>
+                <div className="term-group-grid">
+                  {groupTerms.map((item, index) => <article key={item.term}><span className="term-index">{group.step}.{index + 1}</span><div><h4>{item.term}</h4><b>{item.expansion}</b></div><p>{item.definition}</p></article>)}
+                </div>
+                {(termFilter === "All" || group.category === "Machine") && <div className={`term-transition ${group.category === "Machine" ? "feedback" : ""}`}><span>{group.transition}</span><b>{group.category === "Machine" ? "↺" : "↓"}</b></div>}
+              </section>
+            );
+          })}
         </div>
       </section>
 
